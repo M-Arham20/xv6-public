@@ -54,82 +54,89 @@ void panic(char*);
 struct cmd *parsecmd(char*);
 
 // Execute cmd.  Never returns.
-void
-runcmd(struct cmd *cmd)
-{
-  int p[2];
-  struct backcmd *bcmd;
-  struct execcmd *ecmd;
-  struct listcmd *lcmd;
-  struct pipecmd *pcmd;
-  struct redircmd *rcmd;
-
-  if(cmd == 0)
-    exit();
-
-  switch(cmd->type){
-  default:
-    panic("runcmd");
-
-  case EXEC:
-    ecmd = (struct execcmd*)cmd;
-    if(ecmd->argv[0] == 0)
+void runcmd(struct cmd *cmd) {
+    int p[2];
+    struct backcmd *bcmd;
+    struct execcmd *ecmd;
+    struct listcmd *lcmd;
+    struct pipecmd *pcmd;
+    struct redircmd *rcmd;
+  
+    if (cmd == 0)
       exit();
-    exec(ecmd->argv[0], ecmd->argv);
-    printf(2, "exec %s failed\n", ecmd->argv[0]);
-    break;
-
-  case REDIR:
-    rcmd = (struct redircmd*)cmd;
-    close(rcmd->fd);
-    if(open(rcmd->file, rcmd->mode) < 0){
-      printf(2, "open %s failed\n", rcmd->file);
-      exit();
-    }
-    runcmd(rcmd->cmd);
-    break;
-
-  case LIST:
-    lcmd = (struct listcmd*)cmd;
-    if(fork1() == 0)
-      runcmd(lcmd->left);
-    wait();
-    runcmd(lcmd->right);
-    break;
-
-  case PIPE:
-    pcmd = (struct pipecmd*)cmd;
-    if(pipe(p) < 0)
-      panic("pipe");
-    if(fork1() == 0){
-      close(1);
-      dup(p[1]);
+  
+    switch (cmd->type) {
+    default:
+      panic("runcmd");
+  
+    case EXEC:
+      ecmd = (struct execcmd*)cmd;
+      if (ecmd->argv[0] == 0)
+        exit();
+      exec(ecmd->argv[0], ecmd->argv);
+      printf(2, "exec %s failed\n", ecmd->argv[0]);
+      break;
+  
+    case REDIR:
+      rcmd = (struct redircmd*)cmd;
+      close(rcmd->fd);
+      if (open(rcmd->file, rcmd->mode) < 0) {
+        printf(2, "open %s failed\n", rcmd->file);
+        exit();
+      }
+      runcmd(rcmd->cmd);
+      break;
+  
+    case LIST:
+      lcmd = (struct listcmd*)cmd;
+      if (fork1() == 0) {
+        runcmd(lcmd->left);
+        exit();  // Ensure child exits after running the left command
+      }
+      wait();  // Wait for left command to finish
+      runcmd(lcmd->right);  // Now execute right command in the same process
+      break;
+  
+    case PIPE:
+      pcmd = (struct pipecmd*)cmd;
+      if (pipe(p) < 0)
+        panic("pipe");
+  
+      if (fork1() == 0) {
+        close(1);
+        dup(p[1]);  // Redirect stdout to pipe
+        close(p[0]);
+        close(p[1]);
+        runcmd(pcmd->left);
+        exit();  // Ensure left command process exits
+      }
+  
+      if (fork1() == 0) {
+        close(0);
+        dup(p[0]);  // Redirect stdin to pipe
+        close(p[0]);
+        close(p[1]);
+        runcmd(pcmd->right);
+        exit();  // Ensure right command process exits
+      }
+  
       close(p[0]);
       close(p[1]);
-      runcmd(pcmd->left);
+      wait();
+      wait();
+      break;
+  
+    case BACK:
+      bcmd = (struct backcmd*)cmd;
+      if (fork1() == 0) {
+        runcmd(bcmd->cmd);
+        exit();  // Ensure background process exits
+      }
+      break;
     }
-    if(fork1() == 0){
-      close(0);
-      dup(p[0]);
-      close(p[0]);
-      close(p[1]);
-      runcmd(pcmd->right);
-    }
-    close(p[0]);
-    close(p[1]);
-    wait();
-    wait();
-    break;
-
-  case BACK:
-    bcmd = (struct backcmd*)cmd;
-    if(fork1() == 0)
-      runcmd(bcmd->cmd);
-    break;
+    exit();  // Ensure parent exits properly
   }
-  exit();
-}
-
+  
 int
 getcmd(char *buf, int nbuf)
 {
